@@ -117,9 +117,9 @@ standard Luau that is called out explicitly.
 - [2.7 Floor division](#27-floor-division)
 - [2.8 String escapes](#28-string-escapes)
 - [2.9 Type casts with `::`](#29-type-casts-with-)
-- [2.10 Using varargs correctly](#210-using-varargs-correctly)
-- [2.11 Multiple returns get truncated](#211-multiple-returns-get-truncated)
-- [2.12 `select` with a negative index](#212-select-with-a-negative-index)
+- [2.10 The `select` function](#210-the-select-function)
+- [2.11 Using varargs correctly](#211-using-varargs-correctly)
+- [2.12 Multiple returns get truncated](#212-multiple-returns-get-truncated)
 - [2.13 Checking for an empty table](#213-checking-for-an-empty-table)
 - [2.14 Number precision, important for UserIds](#214-number-precision-important-for-userids)
 - [2.15 `tonumber` with a base](#215-tonumber-with-a-base)
@@ -128,12 +128,12 @@ standard Luau that is called out explicitly.
 **3. Type system**
 
 - [3.1 Basic annotations](#31-basic-annotations)
-- [3.2 Function types](#32-function-types)
-- [3.3 Type aliases and export](#33-type-aliases-and-export)
-- [3.4 Singleton types (literal types)](#34-singleton-types-literal-types)
-- [3.5 Tagged unions and narrowing](#35-tagged-unions-and-narrowing)
-- [3.6 Type refinements](#36-type-refinements)
-- [3.7 Generics](#37-generics)
+- [3.2 Generics](#32-generics)
+- [3.3 Function types](#33-function-types)
+- [3.4 Type aliases and export](#34-type-aliases-and-export)
+- [3.5 Singleton types (literal types)](#35-singleton-types-literal-types)
+- [3.6 Tagged unions and narrowing](#36-tagged-unions-and-narrowing)
+- [3.7 Type refinements](#37-type-refinements)
 - [3.8 Type packs (variadic generics)](#38-type-packs-variadic-generics)
 - [3.9 Read-only and write-only properties](#39-read-only-and-write-only-properties)
 - [3.10 Intersection types](#310-intersection-types)
@@ -326,6 +326,8 @@ const frozenConfig = table.freeze({ speed = 16 })
 frozenConfig.speed = 100   -- ERROR at runtime
 ```
 
+`table.freeze` is covered in [5.1](#51-table-functions).
+
 `const` is a contextual keyword. Existing code that uses `const` as a variable
 name keeps working. It also works with multi-assignment and function
 declarations.
@@ -352,6 +354,7 @@ local currentWave = 1   -- this does change, so local
 
 ### 2.1 Compound assignment
 
+
 > ✅ **Live game** &nbsp;`server + client`
 
 ```luau
@@ -375,6 +378,7 @@ s ..= " world"   -- "hello world"
 
 ### 2.2 `continue`
 
+
 > ✅ **Live game** &nbsp;`server + client`
 
 Vanilla Lua does not have this, Luau does.
@@ -389,6 +393,7 @@ end
 ```
 
 ### 2.3 String interpolation (backticks)
+
 
 > ✅ **Live game** &nbsp;`server + client`
 
@@ -407,6 +412,7 @@ print(`Literal brace: \{not interpolated\}`)
 Works multiline too. Faster and more readable than `string.format` or `..`.
 
 ### 2.4 If-then-else as an expression
+
 
 > ✅ **Live game** &nbsp;`server + client`
 
@@ -434,6 +440,7 @@ local tier =
 
 ### 2.5 Generalized iteration
 
+
 > ✅ **Live game** &nbsp;`server + client`
 
 ```luau
@@ -453,6 +460,7 @@ Note: this works on tables, **not** on varargs. See 2.10.
 
 ### 2.6 Number literals
 
+
 > ✅ **Live game** &nbsp;`server + client`
 
 ```luau
@@ -462,9 +470,11 @@ local separated = 1_000_000   -- 1000000, underscores are cosmetic
 local combined = 0b1010_1010  -- 170
 ```
 
-Binary literals plus underscores make bitflags a lot more readable.
+Binary literals plus underscores make bitflags a lot more readable. The `bit32`
+functions that go with them are in [5.9](#59-bit32).
 
 ### 2.7 Floor division
+
 
 > ✅ **Live game** &nbsp;`server + client`
 
@@ -475,6 +485,7 @@ print(-7 // 2)  -- -4  (rounds down, not toward zero)
 ```
 
 ### 2.8 String escapes
+
 
 > ✅ **Live game** &nbsp;`server + client`
 
@@ -494,6 +505,7 @@ newlines.
 
 ### 2.9 Type casts with `::`
 
+
 > ✅ **Live game** &nbsp;`server + client`
 
 ```luau
@@ -507,7 +519,61 @@ local weird = (someValue :: any) :: MyType
 This is a compile-time cast, not a runtime conversion. You are telling the type
 checker "trust me". If you lie, it still crashes at runtime.
 
-### 2.10 Using varargs correctly
+### 2.10 The `select` function
+
+> ✅ **Live game** &nbsp;`server + client`
+
+`select` reads a vararg pack without turning it into a table. Two forms:
+
+```luau
+local function demo(...)
+    print(select("#", ...))   -- how many arguments were passed, nils included
+    print(select(2, ...))     -- everything from position 2 onward
+end
+
+demo("a", "b", "c")   -- 3        then    b  c
+```
+
+`select("#", ...)` is the only reliable argument count. `#{...}` stops at the
+first nil, so a call like `f(1, nil, 3)` gives you 3 from `select` and 1 from
+the length operator.
+
+Negative indices count from the end:
+
+```luau
+local function last(...)
+    return (select(-1, ...))
+end
+
+local function lastTwo(...)
+    return select(-2, ...)
+end
+
+print(last(1, 2, 3))       -- 3
+print(lastTwo(1, 2, 3))    -- 2  3
+```
+
+That is handy for variadic APIs where the last argument is an optional callback
+or an options table:
+
+```luau
+local function connect(...)
+    const argCount = select("#", ...)
+    const handler = select(-1, ...)
+
+    if type(handler) ~= "function" then
+        error("last argument must be a function", 2)
+    end
+
+    for i = 1, argCount - 1 do
+        const signal = select(i, ...)
+        signal:Connect(handler)
+    end
+end
+```
+
+### 2.11 Using varargs correctly
+
 
 > ✅ **Live game** &nbsp;`server + client`
 
@@ -555,7 +621,8 @@ end
 
 `select("#", ...)` gives the argument count including nils. `#{...}` does not.
 
-### 2.11 Multiple returns get truncated
+### 2.12 Multiple returns get truncated
+
 
 > ✅ **Live game** &nbsp;`server + client`
 
@@ -576,43 +643,8 @@ local t3 = {3, two()}  -- {3, 1, 2}
 > [!WARNING]
 > This rule bites often with `table.insert(t, f())` where `f` returns several values.
 
-### 2.12 `select` with a negative index
-
-> ✅ **Live game** &nbsp;`server + client`
-
-```luau
-local function last(...)
-    return (select(-1, ...))
-end
-
-local function lastTwo(...)
-    return select(-2, ...)
-end
-
-print(last(1, 2, 3))       -- 3
-print(lastTwo(1, 2, 3))    -- 2  3
-```
-
-Negative indices count from the end. Handy for variadic APIs where the last
-argument is an optional callback or an options table:
-
-```luau
-local function connect(...)
-    const argCount = select("#", ...)
-    const handler = select(-1, ...)
-
-    if type(handler) ~= "function" then
-        error("last argument must be a function", 2)
-    end
-
-    for i = 1, argCount - 1 do
-        const signal = select(i, ...)
-        signal:Connect(handler)
-    end
-end
-```
-
 ### 2.13 Checking for an empty table
+
 
 > ✅ **Live game** &nbsp;`server + client`
 
@@ -629,6 +661,7 @@ end
 `next` is also the fastest way, because it stops after the first element.
 
 ### 2.14 Number precision, important for UserIds
+
 
 > ✅ **Live game** &nbsp;`server + client`
 
@@ -656,6 +689,7 @@ buffer.writef64(b, 0, player.UserId)   -- 8 bytes, exact
 
 ### 2.15 `tonumber` with a base
 
+
 > ✅ **Live game** &nbsp;`server + client`
 
 ```luau
@@ -663,7 +697,7 @@ tonumber("ff", 16)      -- 255
 tonumber("1010", 2)     -- 10
 tonumber("z", 36)       -- 35
 
--- Handy for hex colors
+-- Handy for hex colors ( gsub: 5.6, bit32: 5.9 )
 local function hexToColor3(hex: string): Color3
     const value = assert(tonumber(hex:gsub("#", ""), 16), "invalid hex")
     return Color3.fromRGB(
@@ -675,6 +709,7 @@ end
 ```
 
 ### 2.16 Tail calls do not exist in Luau
+
 
 > ✅ **Live game** &nbsp;`server + client`
 
@@ -726,6 +761,7 @@ end
 
 For deep instance trees this is safer than recursion.
 
+
 <p align="right"><a href="#roblox-luau-reference"><sub>Back to top</sub></a></p>
 
 ---
@@ -733,6 +769,7 @@ For deep instance trees this is safer than recursion.
 ## 3. Type system
 
 ### 3.1 Basic annotations
+
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
@@ -753,7 +790,38 @@ local mixed: {name: string, age: number} = {name = "x", age = 1}
 `any` turns type checking off. `unknown` is the safe variant: you have to narrow
 it before you may do anything with it.
 
-### 3.2 Function types
+### 3.2 Generics
+
+
+> 🧩 **Live game** &nbsp;`type-check only`
+
+```luau
+-- Simple generic
+local function identity<T>(value: T): T
+    return value
+end
+
+-- Multiple type params
+local function map<T, U>(list: {T}, transform: (T) -> U): {U}
+    local out = table.create(#list)
+    for i, v in list do
+        out[i] = transform(v)
+    end
+    return out
+end
+
+-- Generic type alias
+type Dictionary<K, V> = {[K]: V}
+type Stack<T> = { items: {T} }
+
+-- Default type parameters
+type Response<T = string> = { ok: boolean, body: T }
+local r: Response = { ok = true, body = "hi" }        -- T = string
+local r2: Response<number> = { ok = true, body = 42 }
+```
+
+### 3.3 Function types
+
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
@@ -768,7 +836,8 @@ type Variadic = (...string) -> ()
 
 There is no `void` type in Luau. Use `()`.
 
-### 3.3 Type aliases and export
+### 3.4 Type aliases and export
+
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
@@ -793,7 +862,8 @@ type PlayerData = Types.PlayerData
 local data: PlayerData = { userId = 1, coins = 0, inventory = {} }
 ```
 
-### 3.4 Singleton types (literal types)
+### 3.5 Singleton types (literal types)
+
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
@@ -821,7 +891,8 @@ type Loading = { loaded: false }
 type State = Loaded | Loading
 ```
 
-### 3.5 Tagged unions and narrowing
+### 3.6 Tagged unions and narrowing
+
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
@@ -868,7 +939,8 @@ local function handle(msg: NetworkMessage)
 end
 ```
 
-### 3.6 Type refinements
+### 3.7 Type refinements
+
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
@@ -907,36 +979,8 @@ local function safe(v: string?)
 end
 ```
 
-### 3.7 Generics
-
-> 🧩 **Live game** &nbsp;`type-check only`
-
-```luau
--- Simple generic
-local function identity<T>(value: T): T
-    return value
-end
-
--- Multiple type params
-local function map<T, U>(list: {T}, transform: (T) -> U): {U}
-    local out = table.create(#list)
-    for i, v in list do
-        out[i] = transform(v)
-    end
-    return out
-end
-
--- Generic type alias
-type Dictionary<K, V> = {[K]: V}
-type Stack<T> = { items: {T} }
-
--- Default type parameters
-type Response<T = string> = { ok: boolean, body: T }
-local r: Response = { ok = true, body = "hi" }        -- T = string
-local r2: Response<number> = { ok = true, body = 42 }
-```
-
 ### 3.8 Type packs (variadic generics)
+
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
@@ -962,6 +1006,7 @@ end
 
 ### 3.9 Read-only and write-only properties
 
+
 > 🧩 **Live game** &nbsp;`type-check only`
 
 Available in the new type solver.
@@ -985,6 +1030,7 @@ This is compile-time only. For real runtime protection use `table.freeze`.
 
 ### 3.10 Intersection types
 
+
 > 🧩 **Live game** &nbsp;`type-check only`
 
 ```luau
@@ -998,6 +1044,7 @@ local p: Person = { name = "x", age = 1 }
 Useful for mixins and for extending existing types.
 
 ### 3.11 Function overloads via intersection types
+
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
@@ -1019,6 +1066,7 @@ local nm = get(part, "Name")       -- Luau knows: string
 
 ### 3.12 Recursive and mutually recursive types
 
+
 > 🧩 **Live game** &nbsp;`type-check only`
 
 ```luau
@@ -1037,6 +1085,7 @@ type JSONValue = string | number | boolean | nil | {JSONValue} | {[string]: JSON
 ```
 
 ### 3.13 `never` for exhaustiveness checking
+
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
@@ -1072,6 +1121,7 @@ networker with many packet types.
 
 ### 3.14 Branded types (simulating nominal typing)
 
+
 > 🧩 **Live game** &nbsp;`type-check only`
 
 Luau is structurally typed: `{x: number}` and `{x: number}` are the same type,
@@ -1096,6 +1146,7 @@ whole classes of bugs where you pass the wrong id.
 
 ### 3.15 `typeof()` in type context
 
+
 > 🧩 **Live game** &nbsp;`type-check only`
 
 ```luau
@@ -1111,6 +1162,7 @@ type Stats = typeof(Template)   -- {health: number, speed: number, name: string}
 ```
 
 ### 3.16 User-defined type functions
+
 
 > 🧩 **Live game** &nbsp;`type-check only` &nbsp;— and only with the new type solver enabled.
 
@@ -1131,6 +1183,7 @@ type PartialUser = MakeOptional<User>   -- { id: number?, name: string? }
 
 Check whether your Studio version has the new solver enabled. This is still
 relatively new.
+
 
 <p align="right"><a href="#roblox-luau-reference"><sub>Back to top</sub></a></p>
 
@@ -1165,7 +1218,8 @@ local function oldFunction() end
 ```
 
 `--!native` only pays off for CPU-heavy code (math, loops). For scripts that
-mostly wait on Roblox APIs it buys nothing and costs compile time.
+mostly wait on Roblox APIs it buys nothing and costs compile time. When it is
+worth it and when it is not is in [11.6](#116-when---native-pays-off-and-when-it-does-not).
 
 ### 4.2 Parameterized attributes
 
@@ -1506,6 +1560,8 @@ rawget(t, key)        -- read without __index
 rawset(t, key, value) -- write without __newindex
 rawequal(a, b)        -- compare without __eq
 rawlen(t)             -- length without __len
+
+-- the metamethods these skip are in section 7
 ```
 
 ### 5.12 The debug library
@@ -3447,7 +3503,8 @@ const Signal = require(`@game/ReplicatedStorage/Shared/{name}`)
 
 > [!WARNING]
 > Require-by-string does not wait for a ModuleScript to replicate. On the client,
-> use `game.Loaded:Wait()` or `WaitForChild` first. The string is resolved at the
+> use `game.Loaded:Wait()` or `WaitForChild` ([13.6](#136-waitforchild-with-a-timeout))
+> first. The string is resolved at the
 > moment the require runs, exactly like an instance path would be, so on a client
 > script that runs early the target simply is not there yet.
 
