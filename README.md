@@ -1854,6 +1854,13 @@ Also relevant when deserializing: a corrupt float in a buffer can produce NaN.
 `math.isfinite` is usually the check you want at a network boundary, because an
 infinite position breaks your math just as badly as a NaN one.
 
+If the check sits in a hot loop: `value ~= value` compiles to a single
+compare-and-branch instruction, while `math.isnan` is a fastcall that writes a
+boolean and then branches on it. In the interpreter that makes the self compare
+about 1.5x faster in a tight branch. With native codegen both compile to the same
+machine code. It comes down to a few nanoseconds per check, so outside a hot loop
+use whichever reads better.
+
 ### 6.4 `table.clear` versus `= {}`
 
 > ✅ **Live game** &nbsp;`server + client`
