@@ -11,7 +11,7 @@ Everything in one place.
 ![Luau](https://img.shields.io/badge/language-Luau-00A2FF?style=flat-square&labelColor=1F2328)
 ![Studio 733](https://img.shields.io/badge/verified_on-Roblox_Studio_733-E2231A?style=flat-square&labelColor=1F2328)
 ![New type solver](https://img.shields.io/badge/type_solver-new-7D5BED?style=flat-square&labelColor=1F2328)
-![August 2026](https://img.shields.io/badge/updated-August_2026-57606A?style=flat-square&labelColor=1F2328)
+![September 2026](https://img.shields.io/badge/updated-September_2026-57606A?style=flat-square&labelColor=1F2328)
 
 ---
 
