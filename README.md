@@ -468,10 +468,34 @@ local hex = 0xFF              -- 255
 local binary = 0b1010         -- 10
 local separated = 1_000_000   -- 1000000, underscores are cosmetic
 local combined = 0b1010_1010  -- 170
+
+local thousand = 1e3          -- 1000
+local micro = 1e-6            -- 0.000001
+local avogadro = 6.02e23
 ```
 
 Binary literals plus underscores make bitflags a lot more readable. The `bit32`
 functions that go with them are in [5.9](#59-bit32).
+
+`1e3` is scientific notation: the number before the `e`, times ten to the power
+after it. A negative exponent goes the other way, so `1e-6` is a millionth.
+
+In Lua 5.3 and later this distinction matters, because `1e3` produces a float
+while `1000` produces an integer. In Luau it does not. There is one number type,
+a 64-bit double ([2.14](#214-number-precision-important-for-userids)), so `1e3`
+and `1000` are the same value and the notation is purely about readability.
+
+Which one to reach for depends on what you want the reader to see:
+
+```luau
+-- the magnitude is the point
+const EPSILON = 1e-4
+const NS_PER_SECOND = 1e9
+
+-- the digits are the point
+const MAX_COINS = 1_000_000
+const PORT = 49_152
+```
 
 ### 2.7 Floor division
 
@@ -2179,7 +2203,8 @@ in every `task.spawn` wrapper.
 
 > ✅ **Live game** &nbsp;`server + client`
 
-This is the clean way. No hand-maintained type alias.
+The common way, and the one that needs no hand-maintained type alias. It has a
+tradeoff, covered underneath.
 
 ```luau
 --!strict
@@ -2222,6 +2247,65 @@ print(car.speeed)    -- Type error, the typo gets caught
 Why `function Vehicle.drive(self: Vehicle, ...)` instead of
 `function Vehicle:drive(...)`? With dot syntax and an explicit `self`, Luau knows
 exactly what type `self` is. You still call it as `car:drive(10)`.
+
+#### What you give up
+
+`typeof(Vehicle.new(0, 0))` reads the type off the implementation, so everything
+the constructor assigns lands in the exported type. Add an internal field and it
+is public:
+
+```luau
+function Vehicle.new(speed: number, wheels: number)
+    local self = setmetatable({}, Vehicle)
+    self.speed = speed
+    self.wheels = wheels
+    self.distance = 0
+    self._lastTick = 0      -- meant to be internal
+    return self
+end
+
+export type Vehicle = typeof(Vehicle.new(0, 0))
+
+-- and now this autocompletes for everyone who requires the module
+print(car._lastTick)
+```
+
+The type is derived from how the class is built, not from what you decided to
+expose. That is convenient right up to the point where the two are supposed to
+differ, and then it quietly shapes your class around a type you did not write.
+
+If the public surface matters, write that part by hand and keep the inferred
+type for the inside:
+
+```luau
+type Self = typeof(setmetatable({} :: {
+    speed: number,
+    wheels: number,
+    distance: number,
+    _lastTick: number,
+}, Vehicle))
+
+export type Vehicle = {
+    read speed: number,
+    read wheels: number,
+    read distance: number,
+    drive: (Vehicle, seconds: number) -> (),
+    destroy: (Vehicle) -> (),
+}
+
+function Vehicle.drive(self: Self, seconds: number)
+    self.distance += self.speed * seconds
+    self._lastTick = os.clock()
+end
+```
+
+Methods take `Self` and see everything, consumers get `Vehicle` and see only what
+you put in it. You pay for it by maintaining the alias, which is exactly what the
+inferred version was avoiding.
+
+Neither is the right answer everywhere. Inference for small classes and internal
+code, a written type once the module is something other people consume and the
+difference between public and internal starts to matter.
 
 ### 10.2 Inheritance
 
