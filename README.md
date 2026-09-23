@@ -11,7 +11,7 @@ Everything in one place.
 ![Luau](https://img.shields.io/badge/language-Luau-00A2FF?style=flat-square&labelColor=1F2328)
 ![Studio 733](https://img.shields.io/badge/verified_on-Roblox_Studio_733-E2231A?style=flat-square&labelColor=1F2328)
 ![New type solver](https://img.shields.io/badge/type_solver-new-7D5BED?style=flat-square&labelColor=1F2328)
-![September 2026](https://img.shields.io/badge/updated-September_2026-57606A?style=flat-square&labelColor=1F2328)
+![August 2026](https://img.shields.io/badge/updated-August_2026-57606A?style=flat-square&labelColor=1F2328)
 
 ---
 
@@ -140,7 +140,7 @@ standard Luau that is called out explicitly.
 - [3.11 Function overloads via intersection types](#311-function-overloads-via-intersection-types)
 - [3.12 Recursive and mutually recursive types](#312-recursive-and-mutually-recursive-types)
 - [3.13 `never` for exhaustiveness checking](#313-never-for-exhaustiveness-checking)
-- [3.14 Branded types (simulating nominal typing)](#314-branded-types-simulating-nominal-typing)
+- [3.14 Branded types do not hold up in Luau](#314-branded-types-do-not-hold-up-in-luau)
 - [3.15 `typeof()` in type context](#315-typeof-in-type-context)
 - [3.16 User-defined type functions](#316-user-defined-type-functions)
 
@@ -210,9 +210,9 @@ standard Luau that is called out explicitly.
 
 **11. Performance**
 
-- [11.1 Localize globals in hot paths](#111-localize-globals-in-hot-paths)
+- [11.1 Localizing globals does not help in Luau](#111-localizing-globals-does-not-help-in-luau)
 - [11.2 Preallocate tables](#112-preallocate-tables)
-- [11.3 Avoid `#t` in loop conditions](#113-avoid-t-in-loop-conditions)
+- [11.3 `#t` in a loop condition is fine](#113-t-in-a-loop-condition-is-fine)
 - [11.4 `getfenv`/`setfenv` destroy your performance](#114-getfenvsetfenv-destroy-your-performance)
 - [11.5 Benchmarking](#115-benchmarking)
 - [11.6 When `--!native` pays off and when it does not](#116-when---native-pays-off-and-when-it-does-not)
@@ -450,13 +450,17 @@ local t = {"a", "b", "c"}
 for i, v in ipairs(t) do end
 for k, v in pairs(t) do end
 
--- The Luau way (works for both, and is faster)
+-- The Luau way (works for both)
 for i, v in t do
     print(i, v)
 end
 ```
 
-Note: this works on tables, **not** on varargs. See 2.10.
+Performance is comparable to `pairs` and `ipairs`, so this is about readability,
+not speed. It is the recommended form unless you need vanilla Lua compatibility
+or the exact `ipairs` behavior of stopping at the first nil.
+
+Note: this works on tables, **not** on varargs. See [2.11](#211-using-varargs-correctly).
 
 ### 2.6 Number literals
 
@@ -540,7 +544,7 @@ local data = HttpService:JSONDecode(json) :: {name: string, id: number}
 local weird = (someValue :: any) :: MyType
 ```
 
-This is a compile-time cast, not a runtime conversion. You are telling the type
+This only exists for the type checker, it is not a runtime conversion. You are telling the type
 checker "trust me". If you lie, it still crashes at runtime.
 
 ### 2.10 The `select` function
@@ -1050,7 +1054,7 @@ print(config.maxPlayers)   -- OK
 config.maxPlayers = 20     -- Type error
 ```
 
-This is compile-time only. For real runtime protection use `table.freeze`.
+This only exists for the type checker. For real runtime protection use `table.freeze`.
 
 ### 3.10 Intersection types
 
@@ -1114,7 +1118,7 @@ type JSONValue = string | number | boolean | nil | {JSONValue} | {[string]: JSON
 > 🧩 **Live game** &nbsp;`type-check only`
 
 This is the killer feature for tagged unions. If you add a variant later and
-forget to handle it, the compile fails.
+forget to handle it, the type checker flags it.
 
 ```luau
 type Packet =
@@ -1143,30 +1147,43 @@ Add `{ kind: "jump" }` to Packet later and forget the branch, and `packet` in th
 else is no longer `never`, so you get a type error. Exactly what you want in a
 networker with many packet types.
 
-### 3.14 Branded types (simulating nominal typing)
+A type error is not a compile error. The script still compiles and runs with the
+missing branch, so this only protects you if type errors actually block
+something, for example a CI step that fails on them ([14.7](#147-ci)).
 
+### 3.14 Branded types do not hold up in Luau
 
 > 🧩 **Live game** &nbsp;`type-check only`
 
-Luau is structurally typed: `{x: number}` and `{x: number}` are the same type,
-even if they mean different things. Branding forces a distinction.
+Branding is a TypeScript idiom for getting nominal typing out of a structural type
+system: intersect a primitive with a marker, so two ids that are both numbers stop
+being interchangeable.
 
 ```luau
 type UserId = number & { __brand: "UserId" }
 type ItemId = number & { __brand: "ItemId" }
+```
 
-local function toUserId(n: number): UserId
-    return n :: any
-end
+In Luau this is not a supported pattern. A `number` is never a table, so
+`number & { __brand: "UserId" }` describes a value that cannot exist, and once the
+type goes through normalization it simplifies to `never`. It only appears to work
+where that normalization happens not to run, which means it can stop working
+without you changing a line.
+
+If two ids really need to be distinct, make the difference real. A wrapper table
+costs an allocation but is an honest type:
+
+```luau
+type UserId = { read userId: number }
+type ItemId = { read itemId: number }
 
 local function giveItem(user: UserId, item: ItemId) end
 
-local uid = toUserId(12345)
-giveItem(uid, uid)   -- Type error: expected ItemId, got UserId
+giveItem({ userId = 1 }, { userId = 2 })   -- Type error: itemId is missing
 ```
 
-Costs nothing at runtime (the brand only exists in the type system) but catches
-whole classes of bugs where you pass the wrong id.
+For most code the cheaper answer is naming parameters well and validating at the
+boundary ([14.2](#142-validate-at-the-edge-trust-on-the-inside)).
 
 ### 3.15 `typeof()` in type context
 
@@ -1205,8 +1222,9 @@ type User = { id: number, name: string }
 type PartialUser = MakeOptional<User>   -- { id: number?, name: string? }
 ```
 
-Check whether your Studio version has the new solver enabled. This is still
-relatively new.
+Type functions need the new type solver. The official reference, including the
+built-ins such as `keyof` and `setmetatable`, is
+[Type functions](https://luau.org/types/type-functions).
 
 
 <p align="right"><a href="#roblox-luau-reference"><sub>Back to top</sub></a></p>
@@ -1217,7 +1235,7 @@ relatively new.
 
 ### 4.1 Script directives
 
-> ⚠️ **Live game** &nbsp;`partly` &nbsp;— `--!strict`, `--!nonstrict` and `--!nocheck` are analysis only. `--!optimize 2` works everywhere. `--!native` works live **server side only**: Studio compiles a LocalScript natively, the real client does not, so in Studio you measure a speed players never get.
+> ⚠️ **Live game** &nbsp;`partly` &nbsp;— `--!strict`, `--!nonstrict` and `--!nocheck` are analysis only. Published games already compile at optimization level 2, so `--!optimize 2` only changes Studio. `--!native` is documented as **server side**. There are reports of it being enabled on Android clients but no announcement, so do not count on it on the client.
 
 At the top of the script, they must be the first lines:
 
@@ -1226,7 +1244,7 @@ At the top of the script, they must be the first lines:
 --!nonstrict       -- light checking (the default in most cases)
 --!nocheck         -- no checking
 --!native          -- compile this script to machine code
---!optimize 2      -- maximum optimization
+--!optimize 2      -- maximum optimization, published games already use it
 ```
 
 Function-level attributes:
@@ -1237,9 +1255,12 @@ local function hotPath(x: number): number
     return x * x + x
 end
 
-@deprecated("Use newFunction instead")
+@deprecated
 local function oldFunction() end
 ```
+
+The bare `@deprecated` takes no arguments. To give a reason, use the bracket form
+in [4.2](#42-parameterized-attributes).
 
 `--!native` only pays off for CPU-heavy code (math, loops). For scripts that
 mostly wait on Roblox APIs it buys nothing and costs compile time. When it is
@@ -1247,17 +1268,21 @@ worth it and when it is not is in [11.6](#116-when---native-pays-off-and-when-it
 
 ### 4.2 Parameterized attributes
 
-> ⚠️ **Live game** &nbsp;`partly` &nbsp;— `@native` and `@deprecated` work. The `@[...]` form with parameters is new, check that your Studio version parses it before putting it everywhere.
+> ✅ **Live game** &nbsp;`server + client` &nbsp;— `@deprecated` only affects the linter, `@native` follows the same rules as `--!native`.
 
 Beyond the bare `@native` and `@deprecated` from the previous section, the syntax
 is richer:
 
 ```luau
--- All three are identical
+-- Three spellings of the same attribute. Pick one, the parser rejects duplicates
 @native
+local function a() end
+
 @[native]
+local function b() end
+
 @[native()]
-local function fast() end
+local function c() end
 
 -- Multiple attributes on one line
 @[native, deprecated]
@@ -1479,7 +1504,7 @@ patterns entirely and is faster on top of that.
 
 > ✅ **Live game** &nbsp;`server + client`
 
-Important for 13+ platforms with usernames and chat from all over the world.
+Important anywhere players type names or chat in something other than English.
 
 ```luau
 const text = "Café 日本語"
@@ -1492,16 +1517,20 @@ for _, codepoint in utf8.codes(text) do
     print(utf8.char(codepoint))
 end
 
--- Luau specific: graphemes (emoji with modifiers as one unit)
+-- Roblox only: graphemes (emoji with modifiers as one unit)
 for first, last in utf8.graphemes(text) do
     print(text:sub(first, last))
 end
 
 utf8.codepoint(text, 1)      -- codepoint at a byte position
 utf8.offset(text, 3)         -- byte position of the 3rd character
-utf8.nfcnormalize(text)      -- normalizing, Roblox
-utf8.nfdnormalize(text)
+utf8.nfcnormalize(text)      -- Roblox only, normalizing
+utf8.nfdnormalize(text)      -- Roblox only
 ```
+
+`utf8.graphemes`, `utf8.nfcnormalize` and `utf8.nfdnormalize` are Roblox
+additions. They are not in the [Luau standard library](https://luau.org/library),
+so they do not exist in Lune or Lute.
 
 To truncate a display name use `utf8.offset`, not `string.sub`, otherwise you cut
 in the middle of a multi-byte character.
@@ -1569,8 +1598,15 @@ math.randomseed(os.time())
 print(math.random(1, 100))
 ```
 
-Newer Luau versions have `math.lerp(a, b, t)`. Check whether your environment has
-it before building on it.
+Also in the standard library and easy to miss:
+
+```luau
+math.lerp(0, 100, 0.25)          -- 25
+math.map(5, 0, 10, 0, 100)       -- 50, remaps from one range to another
+math.isnan(0/0)                  -- true
+math.isinf(math.huge)            -- true
+math.isfinite(1/0)               -- false
+```
 
 ### 5.11 Raw access, skipping metamethods
 
@@ -1593,20 +1629,23 @@ rawlen(t)             -- length without __len
 > ✅ **Live game** &nbsp;`server + client` &nbsp;— the MicroProfiler and the memory categories are in the live client too, not just in Studio.
 
 ```luau
--- Profiling (visible in the MicroProfiler)
+-- Profiling (visible in the MicroProfiler), Roblox only
 debug.profilebegin("PathfindingUpdate")
 -- heavy code
 debug.profileend()
 
--- Memory categories in the Developer Console
+-- Memory categories in the Developer Console, Roblox only
 debug.setmemorycategory("EnemyAI")
 
--- Stack info
+-- Stack info, standard Luau
 print(debug.traceback())
 local name, line = debug.info(1, "nl")   -- level, what you want to know
 ```
 
 `debug.info` options: `s` source, `l` line, `n` name, `f` function, `a` arity.
+
+`debug.traceback` and `debug.info` are standard Luau. The profiling and memory
+category functions are Roblox additions and do not exist outside the engine.
 
 ### 5.13 Picking the right clock
 
@@ -1800,7 +1839,20 @@ if value ~= value then
 end
 ```
 
+Or say what you mean with the standard library:
+
+```luau
+if math.isnan(value) then
+    error("NaN detected")
+end
+
+math.isinf(value)      -- true for math.huge and -math.huge
+math.isfinite(value)   -- false for NaN and both infinities
+```
+
 Also relevant when deserializing: a corrupt float in a buffer can produce NaN.
+`math.isfinite` is usually the check you want at a network boundary, because an
+infinite position breaks your math just as badly as a NaN one.
 
 ### 6.4 `table.clear` versus `= {}`
 
@@ -1933,6 +1985,12 @@ end
 
 When the Instance goes away, the garbage collector cleans up the cache entry
 automatically. No memory leak. Options: `"k"`, `"v"`, `"kv"`.
+
+Add `s` to any of those (`"ks"`, `"vs"`, `"kvs"`) and the garbage collector is
+also allowed to shrink the table once fewer than three eighths of its slots are
+in use. Without it, a cache that once held 10000 entries keeps that capacity
+after it empties out. The `s` does nothing on its own, it only applies to tables
+that are already weak.
 
 ### 7.4 `__newindex` for runtime read-only
 
@@ -2278,12 +2336,14 @@ If the public surface matters, write that part by hand and keep the inferred
 type for the inside:
 
 ```luau
-type Self = typeof(setmetatable({} :: {
+type VehicleData = {
     speed: number,
     wheels: number,
     distance: number,
     _lastTick: number,
-}, Vehicle))
+}
+
+type Self = setmetatable<VehicleData, typeof(Vehicle)>
 
 export type Vehicle = {
     read speed: number,
@@ -2302,6 +2362,11 @@ end
 Methods take `Self` and see everything, consumers get `Vehicle` and see only what
 you put in it. You pay for it by maintaining the alias, which is exactly what the
 inferred version was avoiding.
+
+`setmetatable<Data, typeof(Class)>` is a built-in type function, and declaring
+the data type yourself and attaching the metatable in the type is the pattern the
+official [Luau OOP guide](https://luau.org/types/object-oriented-programs/) uses.
+Worth reading next to this section.
 
 Neither is the right answer everywhere. Inference for small classes and internal
 code, a written type once the module is something other people consume and the
@@ -2340,14 +2405,32 @@ local GameState = table.freeze({
     Ended = "Ended",
 })
 
-export type GameState = typeof(GameState.Lobby)
--- or more explicitly:
-export type GameStateValue = "Lobby" | "Loading" | "Playing" | "Ended"
+-- keyof turns the table's keys into a union of string singletons
+export type GameStateValue = keyof<typeof(GameState)>
+-- "Lobby" | "Loading" | "Playing" | "Ended"
 
 local function transition(from: GameStateValue, to: GameStateValue) end
 
 transition(GameState.Lobby, GameState.Playing)  -- OK
 transition("Lobyy", "Playing")                  -- Type error
+```
+
+`typeof(GameState.Lobby)` looks like it should give you the same thing and does
+not: the field widens to `string`, so the resulting type accepts any string.
+`keyof` reads the keys instead, which is why the table uses the same text for
+its keys and values.
+
+If you do not need the table at runtime, skip it. A union of string singletons is
+already an enum. It autocompletes, it type checks, and there is nothing to keep
+in sync:
+
+```luau
+type Movement = "Walk" | "Jump" | "Reset"
+
+local function toggle(option: Movement) end
+
+toggle("Walk")   -- autocompletes
+toggle("Wlak")   -- Type error
 ```
 
 Numeric variant when you want to send it compactly over the network:
@@ -2549,25 +2632,37 @@ end
 
 ## 11. Performance
 
-### 11.1 Localize globals in hot paths
+### 11.1 Localizing globals does not help in Luau
 
 > ✅ **Live game** &nbsp;`server + client`
 
+In vanilla Lua, caching `math.sqrt` in a local before a hot loop is a classic
+speedup. In Luau it does nothing:
+
 ```luau
--- Slow in a loop with many iterations
-for i = 1, 100000 do
+-- Both loops run at the same speed
+for i = 1, 1e7 do
     local x = math.sqrt(i)
 end
 
--- Faster: one lookup instead of 100000
 local sqrt = math.sqrt
-for i = 1, 100000 do
+for i = 1, 1e7 do
     local x = sqrt(i)
 end
 ```
 
-Luau's optimizer already catches a lot of this, but on heavy loops it still
-helps.
+Two things make the local pointless. A global chain like `math.sqrt` is resolved
+once when the script loads (an *import*), not looked up on every call. And many
+builtins, `math.sqrt` included, are *fastcalled*: the VM runs a specialized
+implementation directly without setting up a call frame, and it does that whether
+you call `math.sqrt` or a local pointing at it. The
+[Luau performance guide](https://luau.org/performance) says it plainly: caching
+methods in locals is not productive in Luau and not recommended.
+
+The exception is [11.4](#114-getfenvsetfenv-destroy-your-performance). `getfenv`
+and `setfenv` mark the environment impure, which switches imports and fastcalls
+off for the whole script. Localizing helps again at that point, but the real fix
+is removing the `getfenv`.
 
 ### 11.2 Preallocate tables
 
@@ -2583,21 +2678,34 @@ local t = table.create(10000)
 for i = 1, 10000 do t[i] = i end
 ```
 
-### 11.3 Avoid `#t` in loop conditions
+### 11.3 `#t` in a loop condition is fine
 
 > ✅ **Live game** &nbsp;`server + client`
 
+A common piece of advice is to cache the length before a numeric loop. It does
+not apply:
+
 ```luau
--- `#t` is recomputed every iteration
 for i = 1, #list do end
-
--- Better if the length does not change
-local n = #list
-for i = 1, n do end
-
--- Or just generalized iteration
-for i, v in list do end
 ```
+
+The limit of a numeric `for` is evaluated once, before the first iteration, not on
+every pass. On top of that, Luau caches table lengths and keeps them current
+through `table.insert` and `table.remove`, so `#t` is close to constant time
+anyway.
+
+What does matter is changing the table inside that loop. The limit was captured at
+the start, so removing items skips elements and reads past the new end:
+
+```luau
+for i = 1, #list do
+    if shouldRemove(list[i]) then
+        table.remove(list, i)   -- the next item slides into i and gets skipped
+    end
+end
+```
+
+Iterate backwards for that, as in [6.5](#65-swap-remove-for-unordered-lists).
 
 ### 11.4 `getfenv`/`setfenv` destroy your performance
 
@@ -2646,7 +2754,7 @@ precision.
 
 ### 11.6 When `--!native` pays off and when it does not
 
-> ⚠️ **Live game** &nbsp;`server only` &nbsp;— on the client `--!native` is ignored, even though Studio makes it look like it works.
+> ⚠️ **Live game** &nbsp;`server, officially` &nbsp;— documented as server side. There are reports of it being enabled on Android clients, but no announcement. Studio compiles LocalScripts natively either way, so a Studio benchmark tells you nothing about what players get.
 
 Yes: math-heavy code, physics, procedural generation, image processing,
 pathfinding, compression.
@@ -2702,9 +2810,10 @@ Relevant if you generate code or inline very large data tables:
 | Upvalues per function | 200 |
 | Registers per function | 255 |
 | Constants per function | 2^23 |
-| Instructions per function | 2^23 |
+| Instructions per function | 1,000,000,000 |
 
-If you run into "too many local variables", split the function up. Large lookup
+Values from the Luau compiler source. If you run into "too many local
+variables", split the function up. Large lookup
 tables belong in a ModuleScript, not inline in a function.
 
 <p align="right"><a href="#roblox-luau-reference"><sub>Back to top</sub></a></p>
@@ -3614,9 +3723,10 @@ const Signal = require(`@game/ReplicatedStorage/Shared/{name}`)
   `../`. A module that requires only that way can be unit tested outside the
   engine ([14.6](#146-testing))
 
-#### `.luaurc` aliases
+#### `.luaurc` and `.config.luau` aliases
 
-Outside the engine you can define your own aliases:
+Outside the engine you can define your own aliases, in a `.luaurc` or in the same
+settings written as Luau in a `.config.luau` ([14.4](#144-tooling)):
 
 ```json
 {
@@ -3632,7 +3742,7 @@ const Signal = require("@shared/Signal")
 ```
 
 This works in Lune, Lute and luau-lsp. The Roblox engine does not read
-`.luaurc` aliases yet, so a module that uses them runs in your tooling and
+either file's aliases yet, so a module that uses them runs in your tooling and
 breaks in the game. If you want one module to work in both places, stay on `./`
 and `../`, which are the only forms every runtime agrees on.
 
@@ -3842,7 +3952,7 @@ Setting `MaxParts` prevents a single query from returning thousands of parts.
 
 > ✅ **Live game** &nbsp;`server + client`
 
-Every `Vector3.new(0, 0, 0)` creates a new object. Roblox has constants:
+Roblox has named constants for the values you reach for most:
 
 ```luau
 Vector3.zero
@@ -3859,7 +3969,11 @@ CFrame.identity
 Color3.new()  -- still an allocation, cache this yourself
 ```
 
-In a loop that runs 10000 times per second, `Vector3.zero` genuinely matters.
+`Vector3` is a native value type ([5.16](#516-the-vector-library)), so
+`Vector3.new(0, 0, 0)` does not allocate and `Vector3.zero` is a readability win,
+not a speed one. `CFrame`, `Vector2` and `Color3` are still userdata: every `.new`
+is a real allocation, so `CFrame.identity` and a cached `Color3` do save work in a
+hot loop.
 
 ### 13.13 Network ownership
 
@@ -4611,19 +4725,28 @@ paint(part, "Neon")               -- Type error
 
 ### 14.1 Standard script header
 
-> ✅ **Live game** &nbsp;`server + client` &nbsp;— these are the directives from [4.1](#41-script-directives). Mind the `--!native` limitation on the client.
+> ✅ **Live game** &nbsp;`server + client` &nbsp;— these are the directives from [4.1](#41-script-directives).
+
+Set the type check mode once for the whole place instead of repeating it in every
+file:
+
+- In Studio, `Workspace.LuauTypeCheckMode` is the default for every script. A
+  `--!strict` or `--!nonstrict` at the top of a file only overrides it
+- With Rojo and luau-lsp, `languageMode` in `.luaurc` or `.config.luau`
+  ([14.4](#144-tooling)) does the same for your editor and CI
+
+`--!optimize 2` is not needed for shipping either. Published games are already
+compiled at level 2, the directive only changes Studio.
+
+What is left for the top of a file is what is specific to that file:
 
 ```luau
---!strict
---!optimize 2
+--!native
+-- only on scripts with real computational load, see 11.6
 
 const Players = game:GetService("Players")
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 ```
-
-> [!TIP]
-> `--!strict` on every script. Non-negotiable if you want to catch bugs early.
-> `--!native` only on scripts with real computational load.
 
 ### 14.2 Validate at the edge, trust on the inside
 
@@ -4694,6 +4817,19 @@ A `.luaurc` in the root for your type settings:
   "languageMode": "strict",
   "lint": { "*": true },
   "lintErrors": true
+}
+```
+
+Or the same settings written as Luau in a `.config.luau`, which can also use
+variables and logic. Pick one per directory, having both is an error:
+
+```luau
+return {
+    luau = {
+        languagemode = "strict",
+        lint = { ["*"] = true },
+        linterrors = true,
+    },
 }
 ```
 
@@ -4784,7 +4920,7 @@ tooling is in the same language as your game.
 | Continue | `continue` | Skip a loop iteration |
 | Interpolation | `` `hi {x}` `` | Building strings |
 | If expression | `if a then b else c` | Inline conditional |
-| Gen. iteration | `for k, v in t do` | Faster than pairs/ipairs |
+| Gen. iteration | `for k, v in t do` | Replaces pairs/ipairs, same speed |
 | Type cast | `x :: T` | Convincing the compiler |
 | Optional | `T?` | Can be nil |
 | Union | `A \| B` | One of the two |
@@ -4793,7 +4929,7 @@ tooling is in the same language as your game.
 | Never | `x: never` | Exhaustiveness checking |
 | Generic | `<T>` | Reusable functions |
 | Type pack | `<T...>` | Variadic generics |
-| Read-only | `read x: T` | Compile-time immutable |
+| Read-only | `read x: T` | Immutable to the type checker |
 | Freeze | `table.freeze(t)` | Runtime immutable |
 | Buffer | `buffer.create(n)` | Binary data, networking |
 | Native | `--!native` | Machine code compilation |
@@ -4826,6 +4962,9 @@ tooling is in the same language as your game.
 | Sharing state through a module | Server and client are separate VMs |
 | `require("Modules/X")` with no prefix | Start with `./`, `../`, `@self/` or `@game/` |
 | Storing `EnumItem.Value` as if it is stable | Keep your own number and map it |
+| Localizing `math.sqrt` and friends for speed | Imports and fastcalls already cover it |
+| `typeof(t.Field)` as an enum type | `keyof<typeof(t)>`, the field is just `string` |
+| Treating a type error as a compile error | The script still runs, fail CI on it |
 
 <p align="right"><a href="#roblox-luau-reference"><sub>Back to top</sub></a></p>
 
@@ -4836,7 +4975,9 @@ tooling is in the same language as your game.
 **Luau itself**
 
 - Syntax: https://luau.org/syntax
-- Typechecking: https://luau.org/typecheck
+- Type system: https://luau.org/types
+- Type functions: https://luau.org/types/type-functions
+- Object-oriented programs: https://luau.org/types/object-oriented-programs/
 - Compatibility with Lua 5.x: https://luau.org/compatibility
 - Performance: https://luau.org/performance
 - Library reference: https://luau.org/library
