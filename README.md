@@ -409,7 +409,22 @@ print(`Table length: {#someTable}`)
 print(`Literal brace: \{not interpolated\}`)
 ```
 
-Works multiline too. Faster and more readable than `string.format` or `..`.
+Works multiline too, and reads a lot better than `string.format` or a long chain
+of `..`.
+
+Under the hood it is `string.format`. The compiler turns
+`` `Player {name} is level {level}` `` into
+`("Player %* is level %*"):format(name, level)`, so it is a real function call
+that parses a format string every time.
+
+That makes it slower than `..`. A short concatenation compiles to a single
+`CONCAT` instruction with no call at all, and in a benchmark it beats
+interpolation by roughly 10 to 35 percent. Against `string.format` it depends on
+the specifiers: with `%*` they are the same speed, and interpolation is faster
+than `%s` or `%d` only because `%*` does less work.
+
+Use it for readability. If a hot loop builds strings, `..` is faster, and for one
+long string out of many pieces use `table.concat` ([5.2](#52-string-functions)).
 
 ### 2.4 If-then-else as an expression
 
